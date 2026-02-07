@@ -20,11 +20,12 @@ class ZapScraper:
     state: str
     city: str
     district: str
+    headless: bool = True
     struct_data: pl.DataFrame = field(default_factory=pl.DataFrame)
 
     async def execute(self):
 
-        browser = BrowserManager(headless=False)
+        browser = BrowserManager(headless=self.headless)
         async with browser.page() as page:
             await page.goto(self.url_zap, wait_until="domcontentloaded")
 

@@ -1,8 +1,12 @@
 import asyncio
+import os
 from dataclasses import dataclass
 from datetime import datetime
 
+import polars as pl
+
 from src.collector.zap_imoveis.scraper import ZapScraper
+from src.core import geo_catalog
 
 URLS_ZAP = {
     "STUDIO": "https://www.zapimoveis.com.br/aluguel/studio/?transacao=aluguel&tipos=studio_residencial",
@@ -26,23 +30,16 @@ class ZapPipe:
 
     async def run(self):
 
-        items = [
-            {
-                "state": "SP",
-                "city": "São Paulo",
-                "district": "Moema",
-                "tipo_imovel": "CASA",
-            },
-            {
-                "state": "SP",
-                "city": "São Paulo",
-                "district": "Itaim Bibi",
-                "tipo_imovel": "CASA",
-            },
-        ]
+        items = self.get_items()
 
-        tasks = [self.run_scraper(**item) for item in items]
+        sem = asyncio.Semaphore(3)
 
+        async def safe_run(item):
+            async with sem:
+                await self.run_scraper(**item)
+                await asyncio.sleep(1)
+
+        tasks = [safe_run(item) for item in items]
         await asyncio.gather(*tasks)
 
     async def run_scraper(self, tipo_imovel: str, state: str, city: str, district: str):
@@ -57,5 +54,67 @@ class ZapPipe:
             city=city,
             district=district,
         )
-
+        print(f"Iniciando Scraper: {state} - {city} - {district} - {tipo_imovel}")
         await scraper.execute()
+
+    def get_items(self):
+        """
+        Entrega a lista de items já filtrada pelos items já extraídos hoje
+        """
+        df_districts = geo_catalog.get_districts()
+
+        df_districts = df_districts.filter(
+            (pl.col("state") == "SP") & (pl.col("city") == "São Paulo")
+        )
+
+        df_districts = self.add_tipo_imovel(df_districts)
+        df_exclude = self.get_df_scraped_today()
+
+        return df_districts.join(
+            df_exclude, on=["state", "city", "district", "tipo_imovel"], how="anti"
+        ).to_dicts()
+
+    @staticmethod
+    def add_tipo_imovel(df_items: pl.DataFrame):
+
+        df_tipo_imovel = pl.DataFrame({"tipo_imovel": list(URLS_ZAP.keys())})
+
+        df_items = df_items.join(df_tipo_imovel, how="cross")
+
+        return df_items
+
+    def get_df_scraped_today(self):
+
+        today = datetime.today().strftime("%Y-%m-%d")
+        data_path = f"{self.data_path}/zap_imoveis/{today}"
+
+        paths_created = os.listdir(data_path)
+
+        items_to_exclude = []
+
+        for path in paths_created:
+            data_path_crated = f"{data_path}/{path}"
+            files_extracted = os.listdir(data_path_crated)
+            files_extracted = [f.split(".")[0].split("_") for f in files_extracted]
+
+            files_extracted = [
+                {
+                    "state": f[0],
+                    "city": f[1],
+                    "district": f[2],
+                    "tipo_imovel": path.upper(),
+                }
+                for f in files_extracted
+            ]
+
+            items_to_exclude.extend(files_extracted)
+
+        schema = {
+            "state": pl.Utf8,
+            "city": pl.Utf8,
+            "district": pl.Utf8,
+            "tipo_imovel": pl.Utf8,
+        }
+
+        df_exclude = pl.DataFrame(items_to_exclude, schema)
+        return df_exclude
