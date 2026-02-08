@@ -19,9 +19,18 @@ class BrowserManager:
     @asynccontextmanager
     async def page(self):
 
+        args = (
+            [
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+            ]
+            if self.headless
+            else None
+        )
+
         async with async_playwright() as pw:
             browser: Browser = await pw.chromium.launch(
-                headless=self.headless, slow_mo=self.slow_mo
+                headless=self.headless, slow_mo=self.slow_mo, args=args
             )
 
             context = await browser.new_context(

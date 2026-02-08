@@ -1,5 +1,4 @@
 import asyncio
-import os
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -36,8 +35,11 @@ class ZapPipe:
 
         async def safe_run(item):
             async with sem:
-                await self.run_scraper(**item)
-                await asyncio.sleep(4)
+                try:
+                    await asyncio.wait_for(self.run_scraper(**item), timeout=300)
+
+                finally:
+                    await asyncio.sleep(4)
 
         tasks = [safe_run(item) for item in items]
         await asyncio.gather(*tasks)
@@ -56,6 +58,7 @@ class ZapPipe:
         )
         print(f"Iniciando Scraper: {state} - {city} - {district} - {tipo_imovel}")
         await scraper.execute()
+        self.save_log(tipo_imovel, state, city, district)
 
     def get_items(self):
         """
@@ -84,37 +87,42 @@ class ZapPipe:
         return df_items
 
     def get_df_scraped_today(self):
-
+        path = f"{self.data_path}/zap_imoveis/log.parquet"
         today = datetime.today().strftime("%Y-%m-%d")
-        data_path = f"{self.data_path}/zap_imoveis/{today}"
 
-        paths_created = os.listdir(data_path)
-
-        items_to_exclude = []
-
-        for path in paths_created:
-            data_path_crated = f"{data_path}/{path}"
-            files_extracted = os.listdir(data_path_crated)
-            files_extracted = [f.split(".")[0].split("_") for f in files_extracted]
-
-            files_extracted = [
+        try:
+            log = pl.read_parquet(path).filter(pl.col("data_exec") == today)
+        except Exception:
+            log = pl.DataFrame(
+                [],
                 {
-                    "state": f[0],
-                    "city": f[1],
-                    "district": f[2],
-                    "tipo_imovel": path.upper(),
+                    "state": pl.Utf8,
+                    "city": pl.Utf8,
+                    "district": pl.Utf8,
+                    "tipo_imovel": pl.Utf8,
+                },
+            )
+        return log
+
+    def save_log(self, tipo_imovel: str, state: str, city: str, district: str):
+
+        path = f"{self.data_path}/zap_imoveis/log.parquet"
+        try:
+            log = pl.read_parquet(path)
+        except Exception:
+            log = pl.DataFrame()
+
+        new = pl.DataFrame(
+            [
+                {
+                    "state": state,
+                    "city": city,
+                    "district": district,
+                    "tipo_imovel": tipo_imovel,
+                    "data_exec": datetime.today().strftime("%Y-%m-%d"),
                 }
-                for f in files_extracted
             ]
+        )
 
-            items_to_exclude.extend(files_extracted)
-
-        schema = {
-            "state": pl.Utf8,
-            "city": pl.Utf8,
-            "district": pl.Utf8,
-            "tipo_imovel": pl.Utf8,
-        }
-
-        df_exclude = pl.DataFrame(items_to_exclude, schema)
-        return df_exclude
+        log = pl.concat([log, new])
+        log.write_parquet(path)
