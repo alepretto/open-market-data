@@ -32,12 +32,12 @@ class ZapPipe:
 
         items = self.get_items()
 
-        sem = asyncio.Semaphore(3)
+        sem = asyncio.Semaphore(1)
 
         async def safe_run(item):
             async with sem:
                 await self.run_scraper(**item)
-                await asyncio.sleep(1)
+                await asyncio.sleep(4)
 
         tasks = [safe_run(item) for item in items]
         await asyncio.gather(*tasks)

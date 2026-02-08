@@ -9,6 +9,7 @@ from src.collector.zap_imoveis.parser import parse_card
 from src.core.browser import BrowserManager
 
 INPUT_SELECT = 'input[class="olx-core-input-textarea-element olx-core-input-textarea-element--default decoration-none [&::-webkit-search-cancel-button]:hidden"]'
+DIV_AUTOCOMPLETE = 'div[data-cy="autocomplete-dialog"]'
 BTN_SEARCH = 'button[data-cy="rp-search-btn"]'
 BTN_OPTION = 'button[data-cy="autocomplete-item"]'
 
@@ -27,9 +28,13 @@ class ZapScraper:
 
         browser = BrowserManager(headless=self.headless)
         async with browser.page() as page:
-            await page.goto(self.url_zap, wait_until="domcontentloaded")
+            resp = await page.goto(self.url_zap, wait_until="load", timeout=60000)
+            if resp is None or resp.status >= 400:
+                return
 
-            await self._select_filter(page)
+            not_found = await self._select_filter(page)
+            if not_found:
+                return
 
             await self._get_ads_district(page)
 
@@ -37,7 +42,8 @@ class ZapScraper:
 
     async def _select_filter(self, page: Page):
         """
-        Seleciona o filtro do distrito (quase o bairro)
+        Seleciona o filtro do distrito (quase o bairro).
+        Retorna a flag "not_found"
         """
         await page.wait_for_selector(INPUT_SELECT)
         input_el = page.locator(INPUT_SELECT)
@@ -45,10 +51,20 @@ class ZapScraper:
         await input_el.click()
         await input_el.fill(f"{self.district}, {self.city} - {self.state}")
 
+        await page.wait_for_selector(DIV_AUTOCOMPLETE)
+        await asyncio.sleep(2)
+        dialog = page.locator(DIV_AUTOCOMPLETE)
+        not_found = dialog.locator(
+            "span", has_text="Não encontramos nenhuma localização"
+        )
+        if await not_found.count() > 0:
+            return True
+
         await page.wait_for_selector(BTN_OPTION)
-        await asyncio.sleep(1)
         btn_option = page.locator(BTN_OPTION)
         await btn_option.first.click()
+        await asyncio.sleep(2)
+        return False
 
     async def _get_ads_district(self, page: Page):
         """
@@ -57,7 +73,13 @@ class ZapScraper:
 
         page_number = 1
         while True:
-            await page.wait_for_selector('li[data-cy="rp-property-cd"]')
+            await page.wait_for_selector(
+                'li[data-cy="rp-property-cd"], img[alt="Ilustração resultado vazio"]',
+                timeout=5000,
+            )
+            img = page.locator('img[alt="Ilustração resultado vazio"]')
+            if await img.count() > 0:
+                break
 
             cards = page.locator('li[data-cy="rp-property-cd"]')
             n_cards = await cards.count()
@@ -77,7 +99,7 @@ class ZapScraper:
 
             # clique + espera navegação real
             await next_link.click()
-            await page.wait_for_load_state("domcontentloaded")
+            await page.wait_for_load_state("load")
 
     async def _get_ads_page(self, cards: Locator, n_cards: int):
         """
