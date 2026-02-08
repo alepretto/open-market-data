@@ -12,6 +12,8 @@ INPUT_SELECT = 'input[class="olx-core-input-textarea-element olx-core-input-text
 DIV_AUTOCOMPLETE = 'div[data-cy="autocomplete-dialog"]'
 BTN_SEARCH = 'button[data-cy="rp-search-btn"]'
 BTN_OPTION = 'button[data-cy="autocomplete-item"]'
+LI_OPTION = 'button[data-cy="autocomplete-item"]'
+OPTION = 'button[data-cy="autocomplete-item"], a[data-cy="autocomplete-item"]'
 
 
 @dataclass
@@ -21,7 +23,7 @@ class ZapScraper:
     state: str
     city: str
     district: str
-    headless: bool = True
+    headless: bool = False
     struct_data: pl.DataFrame = field(default_factory=pl.DataFrame)
 
     async def execute(self):
@@ -60,9 +62,13 @@ class ZapScraper:
         if await not_found.count() > 0:
             return True
 
-        await page.wait_for_selector(BTN_OPTION)
+        await page.wait_for_selector(OPTION)
         btn_option = page.locator(BTN_OPTION)
+        if await btn_option.count() == 0:
+            return True
+
         await btn_option.first.click()
+
         await asyncio.sleep(2)
         return False
 
@@ -99,7 +105,7 @@ class ZapScraper:
 
             # clique + espera navegação real
             await next_link.click()
-            await page.wait_for_load_state("load")
+            await page.wait_for_load_state("domcontentloaded")
 
     async def _get_ads_page(self, cards: Locator, n_cards: int):
         """
@@ -132,5 +138,5 @@ class ZapScraper:
     def _save_data(self):
         Path(self.data_path).mkdir(parents=True, exist_ok=True)
         path = f"{self.data_path}/{self.state}_{self.city}_{self.district}.parquet"
-
+        print("Salvo no Path: ", path)
         self.struct_data.write_parquet(path)

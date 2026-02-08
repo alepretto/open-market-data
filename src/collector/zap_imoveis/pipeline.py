@@ -36,13 +36,14 @@ class ZapPipe:
         async def safe_run(item):
             async with sem:
                 try:
-                    await asyncio.wait_for(self.run_scraper(**item), timeout=300)
-
+                    await asyncio.wait_for(self.run_scraper(**item), timeout=1200)
+                except Exception as e:
+                    print(f"[ERRO] {item} -> {type(e).__name__}: {e}")
                 finally:
                     await asyncio.sleep(4)
 
         tasks = [safe_run(item) for item in items]
-        await asyncio.gather(*tasks)
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     async def run_scraper(self, tipo_imovel: str, state: str, city: str, district: str):
         today = datetime.today().strftime("%Y-%m-%d")
@@ -59,6 +60,8 @@ class ZapPipe:
         print(f"Iniciando Scraper: {state} - {city} - {district} - {tipo_imovel}")
         await scraper.execute()
         self.save_log(tipo_imovel, state, city, district)
+        print(f"Finalizado Scraper: {state} - {city} - {district} - {tipo_imovel}")
+        print("-" * 20)
 
     def get_items(self):
         """
